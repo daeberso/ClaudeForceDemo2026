@@ -13,3 +13,11 @@ Salesforce DX project for learning Claude Code. Target org alias: `ClaudeForceDe
 ## Workflow
 - Before writing code, explain the plan in Salesforce terms and wait for my OK.
 - Update `manifest/package.xml` with explicit members when adding components.
+
+
+## Git / GitHub
+- Repo: github.com/daeberso/ClaudeForceDemo2026
+- Never commit or push to `main`. Create a feature branch named `feature/<JIRA-KEY>-short-desc`.
+- Commit messages start with the Jira key, e.g. `CFD-1: Add AccountService`.
+- Open PRs with `gh pr create`; include the Jira link and a test summary in the body.
+- Ask before pushing.
