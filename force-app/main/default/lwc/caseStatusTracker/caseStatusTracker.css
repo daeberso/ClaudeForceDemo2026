@@ -1,0 +1,115 @@
+.tracker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 5.5rem;
+  text-align: center;
+}
+
+.step-label {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+/* Rainbow colors per step */
+.color-red {
+  --step-color: #d62728;
+}
+.color-orange {
+  --step-color: #f28c18;
+}
+.color-yellow {
+  --step-color: #f2c200;
+}
+.color-green {
+  --step-color: #2ca02c;
+}
+.color-blue {
+  --step-color: #1f77b4;
+}
+
+.step-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.step-button:disabled {
+  cursor: default;
+}
+
+.step-button:not(:disabled):hover {
+  transform: scale(1.08);
+}
+
+.step-button:focus-visible {
+  outline: 2px solid #0176d3;
+  outline-offset: 3px;
+}
+
+.step-completed {
+  background: var(--step-color);
+  border-color: var(--step-color);
+}
+
+.step-current {
+  background: var(--step-color);
+  border-color: #ffffff;
+  box-shadow: 0 0 0 3px var(--step-color);
+  transform: scale(1.15);
+}
+
+.step-current:not(:disabled):hover {
+  transform: scale(1.2);
+}
+
+.step-future {
+  background: #e5e5e5;
+  border-color: #c9c9c9;
+}
+
+.smiley {
+  width: 100%;
+  height: 100%;
+  fill: #1b1b1b;
+  stroke: #1b1b1b;
+}
+
+.smiley path {
+  fill: none;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+
+.escalated-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 1rem;
+  background: #7b3fa0;
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
