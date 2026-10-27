@@ -1,0 +1,46 @@
+<template>
+  <lightning-card title="Case Status" icon-name="standard:case">
+    <div class="slds-p-horizontal_medium">
+      <template lwc:if={loadError}>
+        <p class="slds-text-color_error" data-id="load-error">{loadError}</p>
+      </template>
+      <template lwc:elseif={hasRecord}>
+        <div class="tracker">
+          <ol class="steps">
+            <template for:each={steps} for:item="step">
+              <li key={step.value} class="step">
+                <button
+                  class={step.buttonClass}
+                  data-value={step.value}
+                  aria-label={step.ariaLabel}
+                  aria-current={step.ariaCurrent}
+                  disabled={isDisabled}
+                  onclick={handleStepClick}
+                >
+                  <template lwc:if={step.isCompleted}>
+                    <svg
+                      class="smiley"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <circle cx="8" cy="9" r="1.75"></circle>
+                      <circle cx="16" cy="9" r="1.75"></circle>
+                      <path d="M6.5 13.5 Q12 20 17.5 13.5"></path>
+                    </svg>
+                  </template>
+                </button>
+                <span class="step-label">{step.label}</span>
+              </li>
+            </template>
+          </ol>
+          <template lwc:if={isEscalated}>
+            <span class="escalated-badge" data-id="escalated-badge"
+              >Escalated</span
+            >
+          </template>
+        </div>
+      </template>
+    </div>
+  </lightning-card>
+</template>
