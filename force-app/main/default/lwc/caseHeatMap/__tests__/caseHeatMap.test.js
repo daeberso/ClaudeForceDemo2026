@@ -66,13 +66,27 @@ function installLeafletMock() {
     invalidateSize: jest.fn(),
     remove: jest.fn()
   };
+  // Like the real Leaflet.heat, drawing into a hidden (0-size) container throws.
+  const failIfHidden = () => {
+    if (mapMock.container?.classList.contains("slds-hide")) {
+      throw new Error(
+        "Failed to execute 'getImageData' on 'CanvasRenderingContext2D': The source width is 0."
+      );
+    }
+  };
   heatLayerMock = {
-    addTo: jest.fn(() => heatLayerMock),
-    setLatLngs: jest.fn(),
+    addTo: jest.fn(() => {
+      failIfHidden();
+      return heatLayerMock;
+    }),
+    setLatLngs: jest.fn(failIfHidden),
     setOptions: jest.fn()
   };
   window.L = {
-    map: jest.fn(() => mapMock),
+    map: jest.fn((container) => {
+      mapMock.container = container;
+      return mapMock;
+    }),
     tileLayer: jest.fn(() => ({ addTo: jest.fn() })),
     heatLayer: jest.fn(() => heatLayerMock),
     latLngBounds: jest.fn((latLngs) => ({ latLngs }))
@@ -446,6 +460,19 @@ describe("c-case-heat-map", () => {
       expect(lastGlobeData()).toEqual([]);
     });
 
+    it("does not create or draw the hidden flat map while the globe is showing", async () => {
+      const element = await createComponent();
+
+      expect(window.L.map).not.toHaveBeenCalled();
+      expect(heatLayerMock.setLatLngs).not.toHaveBeenCalled();
+      expect($(element, "error")).toBeNull();
+
+      getCaseLocations.emit({ ...DATA, points: DATA.points.slice(0, 2) });
+      await flushPromises();
+      expect(window.L.map).not.toHaveBeenCalled();
+      expect($(element, "error")).toBeNull();
+    });
+
     it("switches to the flat map on drill-down and back to the globe at World (AC 3)", async () => {
       const element = await createComponent();
 
@@ -453,14 +480,26 @@ describe("c-case-heat-map", () => {
       expect(globeEl(element).classList).toContain("slds-hide");
       expect(mapEl(element).classList).not.toContain("slds-hide");
       expect(globeMock.pauseAnimation).toHaveBeenCalledTimes(1);
-      expect(mapMock.invalidateSize).toHaveBeenCalledTimes(1);
+      expect(window.L.map).toHaveBeenCalledTimes(1);
+      expect(lastHeatPoints()).toHaveLength(3);
       expect(mapMock.fitBounds).toHaveBeenCalled();
+      expect($(element, "error")).toBeNull();
 
       element.shadowRoot.querySelectorAll("lightning-breadcrumb")[0].click();
       await flushPromises();
       expect(globeEl(element).classList).not.toContain("slds-hide");
       expect(mapEl(element).classList).toContain("slds-hide");
       expect(globeMock.resumeAnimation).toHaveBeenCalledTimes(1);
+
+      // Filters changed while on the globe; the flat map catches up when shown again.
+      getCaseLocations.emit({ ...DATA, points: DATA.points.slice(2) });
+      await flushPromises();
+      mapMock.fitBounds.mockClear();
+      await fire($(element, "country"), "change", "United States");
+      expect(window.L.map).toHaveBeenCalledTimes(1);
+      expect(mapMock.invalidateSize).toHaveBeenCalledTimes(1);
+      expect(lastHeatPoints()).toEqual([[45.52, -122.68, 9]]);
+      expect(mapMock.fitBounds).toHaveBeenCalledTimes(1);
     });
 
     it("auto-rotates slowly by default (AC 2)", async () => {
@@ -548,8 +587,9 @@ describe("c-case-heat-map", () => {
       }
     );
 
-    it("destroys the globe when the component is removed", async () => {
+    it("destroys the globe and the flat map when the component is removed", async () => {
       const element = await createComponent();
+      await fire($(element, "country"), "change", "United States");
       document.body.removeChild(element);
 
       expect(globeMock._destructor).toHaveBeenCalled();

@@ -63,6 +63,9 @@ export default class CaseHeatMap extends LightningElement {
   map;
   heatLayer;
   librariesRequested = false;
+  leafletReady = false;
+  // Whether the flat map container was visible at the last render. Leaflet (and
+  // Leaflet.heat's canvas) can't be created or drawn while its container is hidden.
   mapWasVisible = false;
 
   // 3D globe for the World level (KAN-8): "loading" | "ready" | "unavailable"
@@ -153,7 +156,10 @@ export default class CaseHeatMap extends LightningElement {
       loadStyle(this, `${LEAFLET}/leaflet.css`)
     ])
       .then(() => loadScript(this, `${LEAFLET}/leaflet-heat.js`))
-      .then(() => this.initMap())
+      .then(() => {
+        this.leafletReady = true;
+        this.syncViews();
+      })
       .catch((error) => {
         this.libraryError = `Unable to load the map: ${reduceError(error)}`;
       });
@@ -257,14 +263,22 @@ export default class CaseHeatMap extends LightningElement {
     this.globe.heatmapsData(points.length ? [points] : []);
   }
 
-  // Keeps Leaflet sized correctly after being hidden and runs the globe only while it is visible.
+  // Creates the flat map the first time it is visible, re-measures it each time it is shown
+  // again, and runs the globe only while the globe is visible.
   syncViews() {
     const mapVisible = !this.showGlobe && !this.errorMessage;
-    if (this.map && mapVisible && !this.mapWasVisible) {
+    const becameVisible = mapVisible && !this.mapWasVisible;
+    this.mapWasVisible = mapVisible;
+    if (mapVisible && this.leafletReady && !this.map) {
+      try {
+        this.initMap();
+      } catch (error) {
+        this.libraryError = `Unable to load the map: ${reduceError(error)}`;
+      }
+    } else if (becameVisible && this.map) {
       this.map.invalidateSize();
       this.updateMap(true);
     }
-    this.mapWasVisible = mapVisible;
     this.syncGlobeAnimation();
   }
 
@@ -300,7 +314,8 @@ export default class CaseHeatMap extends LightningElement {
   }
 
   updateMap(refit) {
-    if (!this.map || !this.heatLayer) {
+    // While hidden, updates are skipped; syncViews refits once the map is shown again.
+    if (!this.map || !this.heatLayer || !this.mapWasVisible) {
       return;
     }
     const points = this.visiblePoints;
