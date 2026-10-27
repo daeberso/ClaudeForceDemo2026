@@ -110,6 +110,12 @@
       </template>
 
       <div class="map-wrapper">
+        <div
+          class={globeClass}
+          lwc:dom="manual"
+          role="img"
+          aria-label="3D globe showing where cases are located"
+        ></div>
         <div class={mapClass} lwc:dom="manual"></div>
         <template lwc:if={isLoading}>
           <lightning-spinner

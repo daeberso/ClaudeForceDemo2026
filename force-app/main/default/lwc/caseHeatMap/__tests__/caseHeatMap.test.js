@@ -3,6 +3,10 @@ import CaseHeatMap from "c/caseHeatMap";
 import { loadScript } from "lightning/platformResourceLoader";
 import { getObjectInfo, getPicklistValues } from "lightning/uiObjectInfoApi";
 import getCaseLocations from "@salesforce/apex/CaseHeatMapController.getCaseLocations";
+import { supportsWebGL } from "../webgl";
+
+// WebGL is off by default, so the KAN-7 tests exercise the flat map at World.
+jest.mock("../webgl", () => ({ supportsWebGL: jest.fn(() => false) }));
 
 jest.mock(
   "@salesforce/apex/CaseHeatMapController.getCaseLocations",
@@ -59,19 +63,73 @@ function installLeafletMock() {
   mapMock = {
     setView: jest.fn(() => mapMock),
     fitBounds: jest.fn(),
+    invalidateSize: jest.fn(),
     remove: jest.fn()
   };
+  // Like the real Leaflet.heat, drawing into a hidden (0-size) container throws.
+  const failIfHidden = () => {
+    if (mapMock.container?.classList.contains("slds-hide")) {
+      throw new Error(
+        "Failed to execute 'getImageData' on 'CanvasRenderingContext2D': The source width is 0."
+      );
+    }
+  };
   heatLayerMock = {
-    addTo: jest.fn(() => heatLayerMock),
-    setLatLngs: jest.fn(),
+    addTo: jest.fn(() => {
+      failIfHidden();
+      return heatLayerMock;
+    }),
+    setLatLngs: jest.fn(failIfHidden),
     setOptions: jest.fn()
   };
   window.L = {
-    map: jest.fn(() => mapMock),
+    map: jest.fn((container) => {
+      mapMock.container = container;
+      return mapMock;
+    }),
     tileLayer: jest.fn(() => ({ addTo: jest.fn() })),
     heatLayer: jest.fn(() => heatLayerMock),
     latLngBounds: jest.fn((latLngs) => ({ latLngs }))
   };
+}
+
+let globeMock;
+let controlsMock;
+
+function installGlobeMock() {
+  controlsMock = {
+    autoRotate: false,
+    autoRotateSpeed: 0,
+    listeners: {},
+    addEventListener: jest.fn((type, fn) => {
+      controlsMock.listeners[type] = fn;
+    })
+  };
+  globeMock = {
+    controls: jest.fn(() => controlsMock),
+    pauseAnimation: jest.fn(),
+    resumeAnimation: jest.fn(),
+    _destructor: jest.fn()
+  };
+  [
+    "globeImageUrl",
+    "backgroundColor",
+    "width",
+    "height",
+    "heatmapPointLat",
+    "heatmapPointLng",
+    "heatmapPointWeight",
+    "heatmapBandwidth",
+    "heatmapColorSaturation",
+    "heatmapBaseAltitude",
+    "heatmapTopAltitude",
+    "heatmapsTransitionDuration",
+    "heatmapsData",
+    "pointOfView"
+  ].forEach((method) => {
+    globeMock[method] = jest.fn(() => globeMock);
+  });
+  window.Globe = jest.fn(() => globeMock);
 }
 
 async function createComponent(data = DATA) {
@@ -98,6 +156,8 @@ async function fire(target, type, value) {
 describe("c-case-heat-map", () => {
   beforeEach(() => {
     installLeafletMock();
+    installGlobeMock();
+    supportsWebGL.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -107,6 +167,8 @@ describe("c-case-heat-map", () => {
     jest.clearAllMocks();
     loadScript.mockResolvedValue();
     delete window.L;
+    delete window.Globe;
+    delete window.matchMedia;
   });
 
   describe("world view (AC 2, 3, 8, 11)", () => {
@@ -349,6 +411,188 @@ describe("c-case-heat-map", () => {
       const element = await createComponent();
       document.body.removeChild(element);
 
+      expect(mapMock.remove).toHaveBeenCalled();
+    });
+  });
+
+  describe("3D globe world view (KAN-8)", () => {
+    const globeEl = (element) => element.shadowRoot.querySelector(".globe");
+    const mapEl = (element) => element.shadowRoot.querySelector(".map");
+    const lastGlobeData = () => globeMock.heatmapsData.mock.calls.at(-1)[0];
+
+    beforeEach(() => {
+      supportsWebGL.mockReturnValue(true);
+    });
+
+    it("shows the globe at World with every point weighted by case count (AC 1, 5)", async () => {
+      const element = await createComponent();
+
+      expect(window.Globe).toHaveBeenCalledWith(globeEl(element), {
+        animateIn: false
+      });
+      const scripts = loadScript.mock.calls.map((call) => call[1]);
+      expect(scripts.some((url) => url.endsWith("/globe.gl.min.js"))).toBe(
+        true
+      );
+      expect(globeMock.globeImageUrl.mock.calls[0][0]).toMatch(
+        /\/earth-dark\.jpg$/
+      );
+      expect(globeMock.heatmapPointWeight).toHaveBeenCalledWith("count");
+      expect(lastGlobeData()).toEqual([DATA.points]);
+      expect(globeEl(element).classList).not.toContain("slds-hide");
+      expect(mapEl(element).classList).toContain("slds-hide");
+    });
+
+    it("updates the globe heat layer when filters return new data (AC 4)", async () => {
+      await createComponent();
+
+      getCaseLocations.emit({
+        ...DATA,
+        points: DATA.points.slice(3),
+        mappedCount: 2
+      });
+      await flushPromises();
+
+      expect(lastGlobeData()).toEqual([DATA.points.slice(3)]);
+
+      getCaseLocations.emit({ ...DATA, points: [], mappedCount: 0 });
+      await flushPromises();
+      expect(lastGlobeData()).toEqual([]);
+    });
+
+    it("does not create or draw the hidden flat map while the globe is showing", async () => {
+      const element = await createComponent();
+
+      expect(window.L.map).not.toHaveBeenCalled();
+      expect(heatLayerMock.setLatLngs).not.toHaveBeenCalled();
+      expect($(element, "error")).toBeNull();
+
+      getCaseLocations.emit({ ...DATA, points: DATA.points.slice(0, 2) });
+      await flushPromises();
+      expect(window.L.map).not.toHaveBeenCalled();
+      expect($(element, "error")).toBeNull();
+    });
+
+    it("switches to the flat map on drill-down and back to the globe at World (AC 3)", async () => {
+      const element = await createComponent();
+
+      await fire($(element, "country"), "change", "United States");
+      expect(globeEl(element).classList).toContain("slds-hide");
+      expect(mapEl(element).classList).not.toContain("slds-hide");
+      expect(globeMock.pauseAnimation).toHaveBeenCalledTimes(1);
+      expect(window.L.map).toHaveBeenCalledTimes(1);
+      expect(lastHeatPoints()).toHaveLength(3);
+      expect(mapMock.fitBounds).toHaveBeenCalled();
+      expect($(element, "error")).toBeNull();
+
+      element.shadowRoot.querySelectorAll("lightning-breadcrumb")[0].click();
+      await flushPromises();
+      expect(globeEl(element).classList).not.toContain("slds-hide");
+      expect(mapEl(element).classList).toContain("slds-hide");
+      expect(globeMock.resumeAnimation).toHaveBeenCalledTimes(1);
+
+      // Filters changed while on the globe; the flat map catches up when shown again.
+      getCaseLocations.emit({ ...DATA, points: DATA.points.slice(2) });
+      await flushPromises();
+      mapMock.fitBounds.mockClear();
+      await fire($(element, "country"), "change", "United States");
+      expect(window.L.map).toHaveBeenCalledTimes(1);
+      expect(mapMock.invalidateSize).toHaveBeenCalledTimes(1);
+      expect(lastHeatPoints()).toEqual([[45.52, -122.68, 9]]);
+      expect(mapMock.fitBounds).toHaveBeenCalledTimes(1);
+    });
+
+    it("auto-rotates slowly by default (AC 2)", async () => {
+      await createComponent();
+
+      expect(controlsMock.autoRotate).toBe(true);
+      expect(controlsMock.autoRotateSpeed).toBeGreaterThan(0);
+      expect(controlsMock.autoRotateSpeed).toBeLessThan(1);
+    });
+
+    it("pauses rotation while dragging and resumes after an idle delay (AC 2)", async () => {
+      await createComponent();
+
+      controlsMock.listeners.start();
+      expect(controlsMock.autoRotate).toBe(false);
+
+      jest.useFakeTimers();
+      try {
+        controlsMock.listeners.end();
+        jest.advanceTimersByTime(2999);
+        expect(controlsMock.autoRotate).toBe(false);
+        jest.advanceTimersByTime(1);
+        expect(controlsMock.autoRotate).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("does not auto-rotate when reduced motion is preferred (AC 7)", async () => {
+      window.matchMedia = jest.fn((query) => ({
+        matches: query === "(prefers-reduced-motion: reduce)"
+      }));
+      await createComponent();
+
+      expect(controlsMock.autoRotate).toBe(false);
+
+      jest.useFakeTimers();
+      try {
+        controlsMock.listeners.start();
+        controlsMock.listeners.end();
+        jest.advanceTimersByTime(10000);
+        expect(controlsMock.autoRotate).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it.each([
+      [
+        "WebGL is unavailable",
+        () => {
+          supportsWebGL.mockReturnValue(false);
+        }
+      ],
+      [
+        "the globe library fails to load",
+        () => {
+          loadScript.mockImplementation((cmp, url) => {
+            if (url.endsWith("/globe.gl.min.js")) {
+              return Promise.reject(new Error("blocked"));
+            }
+            return Promise.resolve();
+          });
+        }
+      ],
+      [
+        "the globe throws while starting",
+        () => {
+          window.Globe = jest.fn(() => {
+            throw new Error("WebGL context lost");
+          });
+        }
+      ]
+    ])(
+      "falls back to the flat map at World when %s (AC 6)",
+      async (reason, arrange) => {
+        arrange();
+        const element = await createComponent();
+
+        expect(globeEl(element).classList).toContain("slds-hide");
+        expect(mapEl(element).classList).not.toContain("slds-hide");
+        expect(mapMock.setView).toHaveBeenCalledWith([20, 0], 2);
+        expect($(element, "error")).toBeNull();
+        expect(summary(element)).toBe("32 cases mapped · 12 not mapped");
+      }
+    );
+
+    it("destroys the globe and the flat map when the component is removed", async () => {
+      const element = await createComponent();
+      await fire($(element, "country"), "change", "United States");
+      document.body.removeChild(element);
+
+      expect(globeMock._destructor).toHaveBeenCalled();
       expect(mapMock.remove).toHaveBeenCalled();
     });
   });

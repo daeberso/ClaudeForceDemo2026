@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<StaticResource xmlns="http://soap.sforce.com/2006/04/metadata">
+    <cacheControl>Public</cacheControl>
+    <contentType>application/zip</contentType>
+    <description>globe.gl 2.46.2 (includes three.js) and the three-globe earth-dark texture (unmodified, from npm) for the caseHeatMap LWC.</description>
+</StaticResource>
