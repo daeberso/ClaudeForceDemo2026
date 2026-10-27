@@ -2,10 +2,18 @@ import { LightningElement, wire } from "lwc";
 import { loadScript, loadStyle } from "lightning/platformResourceLoader";
 import { getObjectInfo, getPicklistValues } from "lightning/uiObjectInfoApi";
 import LEAFLET from "@salesforce/resourceUrl/leaflet";
+import GLOBE_GL from "@salesforce/resourceUrl/globeGl";
 import CASE_OBJECT from "@salesforce/schema/Case";
 import STATUS_FIELD from "@salesforce/schema/Case.Status";
 import PRIORITY_FIELD from "@salesforce/schema/Case.Priority";
 import getCaseLocations from "@salesforce/apex/CaseHeatMapController.getCaseLocations";
+import { supportsWebGL } from "./webgl";
+
+const GLOBE_HEIGHT = 420;
+const GLOBE_FALLBACK_WIDTH = 600;
+const GLOBE_START_VIEW = { lat: 25, lng: -40, altitude: 2.2 };
+const GLOBE_ROTATE_SPEED = 0.35;
+const GLOBE_RESUME_ROTATE_MS = 3000;
 
 const WORLD_CENTER = [20, 0];
 const WORLD_ZOOM = 2;
@@ -20,6 +28,12 @@ function reduceError(error) {
     return error.body.map((e) => e.message).join(", ");
   }
   return error?.body?.message ?? error?.message ?? "Unknown error";
+}
+
+function prefersReducedMotion() {
+  return Boolean(
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+  );
 }
 
 function toOptions(values) {
@@ -48,7 +62,17 @@ export default class CaseHeatMap extends LightningElement {
 
   map;
   heatLayer;
-  leafletRequested = false;
+  librariesRequested = false;
+  mapWasVisible = false;
+
+  // 3D globe for the World level (KAN-8): "loading" | "ready" | "unavailable"
+  globeState = "loading";
+  globe;
+  globeRunning = false;
+  globeOnScreen = true;
+  globeResizeObserver;
+  globeVisibilityObserver;
+  rotateResumeTimer;
 
   @wire(getObjectInfo, { objectApiName: CASE_OBJECT })
   objectInfo;
@@ -92,6 +116,7 @@ export default class CaseHeatMap extends LightningElement {
       this.isLoading = false;
       this.resetDrillIfMissing();
       this.updateMap(true);
+      this.updateGlobe();
     } else if (error) {
       this.data = undefined;
       this.dataError = reduceError(error);
@@ -100,10 +125,29 @@ export default class CaseHeatMap extends LightningElement {
   }
 
   renderedCallback() {
-    if (this.leafletRequested) {
-      return;
+    if (!this.librariesRequested) {
+      this.librariesRequested = true;
+      this.loadLeaflet();
+      this.loadGlobe();
     }
-    this.leafletRequested = true;
+    this.syncViews();
+  }
+
+  disconnectedCallback() {
+    if (this.map) {
+      this.map.remove();
+      this.map = undefined;
+    }
+    clearTimeout(this.rotateResumeTimer);
+    this.globeResizeObserver?.disconnect();
+    this.globeVisibilityObserver?.disconnect();
+    if (this.globe) {
+      this.globe._destructor();
+      this.globe = undefined;
+    }
+  }
+
+  loadLeaflet() {
     Promise.all([
       loadScript(this, `${LEAFLET}/leaflet.js`),
       loadStyle(this, `${LEAFLET}/leaflet.css`)
@@ -115,11 +159,126 @@ export default class CaseHeatMap extends LightningElement {
       });
   }
 
-  disconnectedCallback() {
-    if (this.map) {
-      this.map.remove();
-      this.map = undefined;
+  // Any globe failure falls back to the flat map at the World level; it never shows an error.
+  loadGlobe() {
+    if (!supportsWebGL()) {
+      this.globeState = "unavailable";
+      return;
     }
+    loadScript(this, `${GLOBE_GL}/globe.gl.min.js`)
+      .then(() => this.initGlobe())
+      .catch(() => {
+        this.globeState = "unavailable";
+      });
+  }
+
+  initGlobe() {
+    try {
+      const container = this.template.querySelector(".globe");
+      const globe = new window.Globe(container, { animateIn: false })
+        .globeImageUrl(`${GLOBE_GL}/earth-dark.jpg`)
+        .backgroundColor("rgba(0,0,0,0)")
+        .width(container.clientWidth || GLOBE_FALLBACK_WIDTH)
+        .height(GLOBE_HEIGHT)
+        .heatmapPointLat("lat")
+        .heatmapPointLng("lng")
+        .heatmapPointWeight("count")
+        .heatmapBandwidth(1.5)
+        .heatmapColorSaturation(2.5)
+        .heatmapBaseAltitude(0.005)
+        .heatmapTopAltitude(0.12)
+        .heatmapsTransitionDuration(600)
+        .pointOfView(GLOBE_START_VIEW);
+
+      const controls = globe.controls();
+      controls.autoRotate = !prefersReducedMotion();
+      controls.autoRotateSpeed = GLOBE_ROTATE_SPEED;
+      controls.addEventListener("start", () => this.pauseRotation());
+      controls.addEventListener("end", () => this.scheduleRotationResume());
+
+      this.globe = globe;
+      this.globeRunning = true;
+      this.globeState = "ready";
+      this.observeGlobe(container);
+      this.updateGlobe();
+      this.syncViews();
+    } catch {
+      this.globe = undefined;
+      this.globeState = "unavailable";
+    }
+  }
+
+  observeGlobe(container) {
+    if (typeof ResizeObserver !== "undefined") {
+      this.globeResizeObserver = new ResizeObserver((entries) => {
+        const width = entries[0]?.contentRect.width;
+        if (width > 0) {
+          this.globe?.width(width);
+        }
+      });
+      this.globeResizeObserver.observe(container);
+    }
+    if (typeof IntersectionObserver !== "undefined") {
+      this.globeVisibilityObserver = new IntersectionObserver((entries) => {
+        this.globeOnScreen = entries[0]?.isIntersecting ?? true;
+        this.syncGlobeAnimation();
+      });
+      this.globeVisibilityObserver.observe(container);
+    }
+  }
+
+  pauseRotation() {
+    clearTimeout(this.rotateResumeTimer);
+    if (this.globe) {
+      this.globe.controls().autoRotate = false;
+    }
+  }
+
+  scheduleRotationResume() {
+    clearTimeout(this.rotateResumeTimer);
+    if (prefersReducedMotion()) {
+      return;
+    }
+    // Auto-rotation resumes after the user has been idle for a moment.
+    // eslint-disable-next-line @lwc/lwc/no-async-operation
+    this.rotateResumeTimer = setTimeout(() => {
+      if (this.globe) {
+        this.globe.controls().autoRotate = true;
+      }
+    }, GLOBE_RESUME_ROTATE_MS);
+  }
+
+  updateGlobe() {
+    if (!this.globe) {
+      return;
+    }
+    // The globe only shows the World level, so it always gets every point.
+    const points = this.data?.points ?? [];
+    this.globe.heatmapsData(points.length ? [points] : []);
+  }
+
+  // Keeps Leaflet sized correctly after being hidden and runs the globe only while it is visible.
+  syncViews() {
+    const mapVisible = !this.showGlobe && !this.errorMessage;
+    if (this.map && mapVisible && !this.mapWasVisible) {
+      this.map.invalidateSize();
+      this.updateMap(true);
+    }
+    this.mapWasVisible = mapVisible;
+    this.syncGlobeAnimation();
+  }
+
+  syncGlobeAnimation() {
+    if (!this.globe) {
+      return;
+    }
+    const shouldRun = this.showGlobe && this.globeOnScreen;
+    if (shouldRun && !this.globeRunning) {
+      this.globe.resumeAnimation();
+    } else if (!shouldRun && this.globeRunning) {
+      this.globe.pauseAnimation();
+    }
+    this.globeRunning = shouldRun;
   }
 
   initMap() {
@@ -298,8 +457,16 @@ export default class CaseHeatMap extends LightningElement {
     return this.hasData && this.visiblePoints.length === 0;
   }
 
+  get showGlobe() {
+    return this.level === "world" && this.globeState !== "unavailable";
+  }
+
   get mapClass() {
-    return this.errorMessage ? "map slds-hide" : "map";
+    return this.errorMessage || this.showGlobe ? "map slds-hide" : "map";
+  }
+
+  get globeClass() {
+    return this.errorMessage || !this.showGlobe ? "globe slds-hide" : "globe";
   }
 
   // ---------- Handlers ----------

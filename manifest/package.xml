@@ -35,6 +35,7 @@
         <name>LightningComponentBundle</name>
     </types>
     <types>
+        <members>globeGl</members>
         <members>leaflet</members>
         <name>StaticResource</name>
     </types>

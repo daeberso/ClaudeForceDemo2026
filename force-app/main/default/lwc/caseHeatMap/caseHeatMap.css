@@ -29,6 +29,18 @@
   border-radius: 0.25rem;
 }
 
+.globe {
+  height: 420px;
+  overflow: hidden;
+  border-radius: 0.25rem;
+  background: radial-gradient(circle at center, #1b2a4a 0%, #050a18 75%);
+  cursor: grab;
+}
+
+.globe:active {
+  cursor: grabbing;
+}
+
 .empty {
   position: absolute;
   top: 50%;
