@@ -1,0 +1,42 @@
+.filters,
+.drill-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.drill {
+  margin-top: 0.75rem;
+}
+
+.drill-pickers lightning-combobox {
+  min-width: 12rem;
+}
+
+.summary {
+  margin: 0.75rem 0 0.5rem;
+  font-weight: 600;
+}
+
+.map-wrapper {
+  position: relative;
+  margin-top: 0.5rem;
+}
+
+.map {
+  height: 420px;
+  border-radius: 0.25rem;
+}
+
+.empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1000;
+  transform: translate(-50%, -50%);
+  padding: 0.5rem 1rem;
+  border-radius: 0.25rem;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
