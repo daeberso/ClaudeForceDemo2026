@@ -1,0 +1,128 @@
+<template>
+  <lightning-card title="Case Locations" icon-name="standard:location">
+    <div class="slds-p-horizontal_medium">
+      <div class="filters" role="group" aria-label="Case filters">
+        <lightning-button-menu
+          label={statusMenuLabel}
+          alternative-text="Filter by status"
+          data-id="status-menu"
+          onselect={handleStatusSelect}
+        >
+          <template for:each={statusMenuItems} for:item="item">
+            <lightning-menu-item
+              key={item.value}
+              value={item.value}
+              label={item.label}
+              checked={item.checked}
+            ></lightning-menu-item>
+          </template>
+        </lightning-button-menu>
+        <lightning-button-menu
+          label={priorityMenuLabel}
+          alternative-text="Filter by priority"
+          data-id="priority-menu"
+          onselect={handlePrioritySelect}
+        >
+          <template for:each={priorityMenuItems} for:item="item">
+            <lightning-menu-item
+              key={item.value}
+              value={item.value}
+              label={item.label}
+              checked={item.checked}
+            ></lightning-menu-item>
+          </template>
+        </lightning-button-menu>
+        <lightning-input
+          type="date"
+          label="Created from"
+          value={startDate}
+          data-id="start-date"
+          onchange={handleStartDateChange}
+        ></lightning-input>
+        <lightning-input
+          type="date"
+          label="Created to"
+          value={endDate}
+          data-id="end-date"
+          onchange={handleEndDateChange}
+        ></lightning-input>
+        <lightning-button
+          label="Clear filters"
+          variant="base"
+          disabled={isClearDisabled}
+          data-id="clear-filters"
+          onclick={handleClearFilters}
+        ></lightning-button>
+      </div>
+
+      <div class="drill">
+        <lightning-breadcrumbs>
+          <template for:each={breadcrumbs} for:item="crumb">
+            <lightning-breadcrumb
+              key={crumb.name}
+              name={crumb.name}
+              label={crumb.label}
+              onclick={handleBreadcrumbClick}
+            ></lightning-breadcrumb>
+          </template>
+        </lightning-breadcrumbs>
+        <div class="drill-pickers">
+          <lightning-combobox
+            label="Country"
+            placeholder="All countries"
+            value={selectedCountry}
+            options={countryOptions}
+            data-id="country"
+            onchange={handleCountryChange}
+          ></lightning-combobox>
+          <lightning-combobox
+            label="State / Province"
+            placeholder="All states"
+            value={selectedState}
+            options={stateOptions}
+            disabled={isStatePickerDisabled}
+            data-id="state"
+            onchange={handleStateChange}
+          ></lightning-combobox>
+        </div>
+      </div>
+
+      <template lwc:if={errorMessage}>
+        <div
+          class="slds-notify slds-notify_alert slds-alert_error"
+          role="alert"
+          data-id="error"
+        >
+          {errorMessage}
+        </div>
+      </template>
+
+      <template lwc:if={hasData}>
+        <p class="summary" aria-live="polite" data-id="summary">
+          {summaryText}
+        </p>
+        <template lwc:if={limitReached}>
+          <p class="slds-text-color_error" data-id="limit-warning">
+            Showing the most recent 10,000 cases. Narrow the filters to see all
+            matching cases.
+          </p>
+        </template>
+      </template>
+
+      <div class="map-wrapper">
+        <div class={mapClass} lwc:dom="manual"></div>
+        <template lwc:if={isLoading}>
+          <lightning-spinner
+            alternative-text="Loading case locations"
+            size="medium"
+          ></lightning-spinner>
+        </template>
+        <template lwc:if={isEmpty}>
+          <div class="empty" data-id="empty">
+            No cases with a location match these filters.
+          </div>
+        </template>
+      </div>
+    </div>
+  </lightning-card>
+</template>
